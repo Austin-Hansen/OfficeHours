@@ -33,6 +33,8 @@
 #define professor_LIMIT 5 /* Number of students the professor can help before he needs a break */
 #define MAX_STUDENTS 1000  /* Maximum number of students in the simulation */
 
+
+
 #define CLASSA 0
 #define CLASSB 1
 #define CLASSC 2
@@ -44,8 +46,13 @@
 
 pthread_mutex_t lock;
 pthread_mutex_t prof_lock;
+pthread_cond_t load_in;
 pthread_cond_t condition;
+pthread_cond_t conditiona;
+pthread_cond_t conditionb;
 sem_t class_seat;
+
+
 /* Basic information about simulation.  They are printed/checked at the end 
  * and in assert statements during execution.
  *
@@ -57,6 +64,9 @@ static int students_in_office;   /* Total numbers of students currently in the o
 static int classa_inoffice;      /* Total numbers of students from class A currently in the office */
 static int classb_inoffice;      /* Total numbers of students from class B in the office */
 static int students_since_break = 0;
+static int classa_consec;
+static int classb_consec;
+static int first_flag;
 
 
 typedef struct 
@@ -77,6 +87,11 @@ static int initialize(student_info *si, char *filename)
   classa_inoffice = 0;
   classb_inoffice = 0;
   students_since_break = 0;
+  classa_consec = 0;
+  classb_consec = 0;
+
+  pthread_cond_init(&condition,NULL);
+
   sem_init(&class_seat,0,MAX_SEATS);
 
   /* Initialize your synchronization variables (and 
@@ -126,35 +141,86 @@ void *professorthread(void *junk)
   /* Loop while waiting for students to arrive. */
   while (1) 
   {
+
+    //attempting test casses
+    //if class a thread arrives first, exclude all b threads (only A threads)
+    //if class b thread arrives first, exclude all a threads (only B threads)
+
+    //use counting semaphore or conditional?
+
+
+
       //pthread_mutex_lock(&lock);
           pthread_mutex_lock(&lock);
-     if(students_since_break==professor_LIMIT)
-     {
 
-        if(students_in_office>0)
+      if(classa_consec==5){
+         if(students_in_office==0)
+         {
+           pthread_cond_signal(&conditionb);
+         }
+      }
+
+      if(classa_consec==5){
+         if(students_in_office==0)
+         {
+           pthread_cond_signal(&conditionb);
+         }
+      }
+
+      if(students_since_break==professor_LIMIT)
+      {
+        if(students_in_office==0)
         {
-          pthread_cond_wait(&condition,&lock);
+        take_break();
         }
-        else
+
+      }
+      else if(students_since_break<professor_LIMIT&&(classa_consec!=5||classb_consec!=5))
+      {
+        if(students_in_office==0)
         {
-         take_break();
+          //if there is no A student, admit B student
+          pthread_cond_signal(&conditiona);
+          if(students_in_office==0)
+          {
+            pthread_cond_signal(&conditionb);
+          }
+        }
+        else if(students_in_office>0)
+        {
+
+          if(classa_inoffice!=0)
+          {
+            pthread_cond_signal(&conditiona);
+          }
+          else if(classb_inoffice!=0)
+          {
+            pthread_cond_signal(&conditionb);
+          }
         }
       }
 
-     else
-     {
-      pthread_cond_signal(&condition);
-     }
+    /*if(classa_consec>=5)
+    {
+      printf("memes");
+      if(students_in_office>0)
+      {
+          while(students_in_office!=0){
+          pthread_cond_wait(&condition,&lock);
+          printf("Students in office %d\n",students_in_office);
+          }
+      }
+      
+      else
+      {
+        pthread_cond_wait(&conditionb,&lock);
+      }
+      
+
+    }*/
+
 
      //pthread_mutex_unlock(&lock);
-    /* TODO */
-    /* Add code here to handle the student's request.             */
-    /* Currently the body of the loop is empty. There's           */
-    /* no communication between professor and students, i.e. all  */
-    /* students are admitted without regard of the number         */ 
-    /* of available seats, which class a student is in,           */
-    /* and whether the professor needs a break. You need to add   */
-    /* all of this.                                               */
       pthread_mutex_unlock(&lock);
   }
   pthread_exit(NULL);
@@ -168,16 +234,18 @@ void *professorthread(void *junk)
 void classa_enter() 
 {
    sem_wait(&class_seat);
-  /* TODO */
-  /* Request permission to enter the office.  You might also want to add  */
-  /* synchronization for the simulations variables below                  */
-  /*  YOUR CODE HERE.                                                     */ 
+
   pthread_mutex_lock(&lock);
+ 
+       pthread_cond_wait(&conditiona,&lock); 
+
   students_in_office += 1;
   classa_inoffice += 1;
+  classa_consec+=1;
   //students_since_break += 1;
   printf("Students Since Break %d\n",students_since_break);
   printf("Office %d\n",students_in_office);
+  printf("consec_A %d\n",classa_consec);
   pthread_mutex_unlock(&lock);
 
 
@@ -194,13 +262,15 @@ void classa_enter()
 void classb_enter() 
 {
    sem_wait(&class_seat);
-  /* TODO */
-  /* Request permission to enter the office.  You might also want to add  */
-  /* synchronization for the simulations variables below                  */
-  /*  YOUR CODE HERE.                                                     */ 
-  pthread_mutex_lock(&lock);
+
+   pthread_mutex_lock(&lock);
+
+
+   pthread_cond_wait(&conditionb,&lock); 
+
   students_in_office += 1;
   classb_inoffice += 1;
+  classb_consec+=1;
   //students_since_break += 1;
   printf("Students Since Break %d\n",students_since_break);
   printf("Office %d\n",students_in_office);
@@ -226,12 +296,12 @@ static void ask_questions(int t)
  * You need to implement this.  Do not delete the assert() statements,
  * but feel free to add as many of your own as you like.
  */
+
+//professor lock used, after that the relevant condition is unlocked after
+//and used in the professor thread, so that the class is empty and the professor
+//can take a break
 static void classa_leave() 
 {
-  /* 
-   *  TODO
-   *  YOUR CODE HERE. 
-   */
   pthread_mutex_lock(&prof_lock);
 
   students_in_office -= 1;
