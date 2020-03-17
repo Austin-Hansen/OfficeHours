@@ -162,10 +162,10 @@ void *professorthread(void *junk)
          }
       }
 
-      if(classa_consec==5){
+      if(classb_consec==5){
          if(students_in_office==0)
          {
-           pthread_cond_signal(&conditionb);
+           pthread_cond_signal(&conditiona);
          }
       }
 
