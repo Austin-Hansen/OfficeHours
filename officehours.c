@@ -153,6 +153,8 @@ void *professorthread(void *junk)
       //pthread_mutex_lock(&lock);
           pthread_mutex_lock(&lock);
 
+      //both consec account for the starvation case, waiting until the 
+      //office is clear to restart with a office empty case
       if(classa_consec==5){
          if(students_in_office==0)
          {
@@ -167,6 +169,8 @@ void *professorthread(void *junk)
          }
       }
 
+
+      //there have been 10 students, and the professor must go on break
       if(students_since_break==professor_LIMIT)
       {
         if(students_in_office==0)
@@ -175,6 +179,7 @@ void *professorthread(void *junk)
         }
 
       }
+      //important statement, checks if the professor is not on break, and the starvation case is not in effect
       else if(students_since_break<professor_LIMIT&&(classa_consec!=5||classb_consec!=5))
       {
         if(students_in_office==0)
@@ -199,26 +204,6 @@ void *professorthread(void *junk)
           }
         }
       }
-
-    /*if(classa_consec>=5)
-    {
-      printf("memes");
-      if(students_in_office>0)
-      {
-          while(students_in_office!=0){
-          pthread_cond_wait(&condition,&lock);
-          printf("Students in office %d\n",students_in_office);
-          }
-      }
-      
-      else
-      {
-        pthread_cond_wait(&conditionb,&lock);
-      }
-      
-
-    }*/
-
 
      //pthread_mutex_unlock(&lock);
       pthread_mutex_unlock(&lock);
