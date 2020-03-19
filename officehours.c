@@ -46,10 +46,12 @@
 
 pthread_mutex_t lock;
 pthread_mutex_t prof_lock;
+
 pthread_cond_t load_in;
 pthread_cond_t condition;
 pthread_cond_t conditiona;
 pthread_cond_t conditionb;
+
 sem_t class_seat;
 
 
@@ -89,6 +91,7 @@ static int initialize(student_info *si, char *filename)
   students_since_break = 0;
   classa_consec = 0;
   classb_consec = 0;
+  first_flag=0;
 
   pthread_cond_init(&condition,NULL);
 
@@ -141,7 +144,7 @@ void *professorthread(void *junk)
   /* Loop while waiting for students to arrive. */
   while (1) 
   {
-
+    first_flag=0;
     //attempting test casses
     //if class a thread arrives first, exclude all b threads (only A threads)
     //if class b thread arrives first, exclude all a threads (only B threads)
@@ -159,6 +162,7 @@ void *professorthread(void *junk)
          if(students_in_office==0)
          {
            pthread_cond_signal(&conditionb);
+           classa_consec=0;
          }
       }
 
@@ -182,18 +186,21 @@ void *professorthread(void *junk)
       //important statement, checks if the professor is not on break, and the starvation case is not in effect
       else if(students_since_break<professor_LIMIT&&(classa_consec!=5||classb_consec!=5))
       {
+        //first student arrives or office is empty
         if(students_in_office==0)
         {
-          //if there is no A student, admit B student
+          //admit student A
           pthread_cond_signal(&conditiona);
-          if(students_in_office==0)
-          {
+          first_flag=1;
+        }
+
+        if(students_in_office==0&&first_flag!=1)
+        {
             pthread_cond_signal(&conditionb);
-          }
         }
         else if(students_in_office>0)
         {
-
+          //if there is a class A student in the office, another student A can enter
           if(classa_inoffice!=0)
           {
             pthread_cond_signal(&conditiona);
@@ -250,6 +257,7 @@ void classb_enter()
 
    pthread_mutex_lock(&lock);
 
+   printf("mutex locked\n");
 
    pthread_cond_wait(&conditionb,&lock); 
 
