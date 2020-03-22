@@ -30,7 +30,7 @@
 /*** Constants that define parameters of the simulation ***/
 
 #define MAX_SEATS 3        /* Number of seats in the professor's office */
-#define professor_LIMIT 5 /* Number of students the professor can help before he needs a break */
+#define professor_LIMIT 10 /* Number of students the professor can help before he needs a break */
 #define MAX_STUDENTS 1000  /* Maximum number of students in the simulation */
 
 
@@ -44,13 +44,14 @@
 /* TODO */
 /* Add your synchronization variables here */
 
-pthread_mutex_t lock;
-pthread_mutex_t prof_lock;
+pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t prof_lock=PTHREAD_MUTEX_INITIALIZER;
 
-pthread_cond_t load_in;
-pthread_cond_t condition;
-pthread_cond_t conditiona;
-pthread_cond_t conditionb;
+pthread_cond_t Hold=PTHREAD_COND_INITIALIZER;
+pthread_cond_t arrivea=PTHREAD_COND_INITIALIZER;
+pthread_cond_t arriveb=PTHREAD_COND_INITIALIZER;
+pthread_cond_t conditiona=PTHREAD_COND_INITIALIZER;
+pthread_cond_t conditionb=PTHREAD_COND_INITIALIZER;
 
 sem_t class_seat;
 
@@ -66,10 +67,13 @@ static int students_in_office;   /* Total numbers of students currently in the o
 static int classa_inoffice;      /* Total numbers of students from class A currently in the office */
 static int classb_inoffice;      /* Total numbers of students from class B in the office */
 static int students_since_break = 0;
-static int classa_consec;
-static int classb_consec;
-static int first_flag;
-
+static int classa_waiting;
+static int classb_waiting;
+static int classa_consec;        //consecutive a students have been in the office
+static int classb_consec;        //consecutive B students have been in the office
+static int first_flag;           //indicates that an A student was chosen first
+static int flushoffice_flag;     //flush the office of students 
+static int flag_type;
 
 typedef struct 
 {
@@ -92,10 +96,15 @@ static int initialize(student_info *si, char *filename)
   classa_consec = 0;
   classb_consec = 0;
   first_flag=0;
+  classa_waiting=0;
+  classb_waiting=0;
+  flushoffice_flag=0;
+  flag_type=0;
 
-  pthread_cond_init(&condition,NULL);
+ // pthread_cond_init(&condition,NULL);
 
-  sem_init(&class_seat,0,MAX_SEATS);
+  sem_init(&class_seat,0,3);
+
 
   /* Initialize your synchronization variables (and 
    * other variables you might use) here
@@ -149,31 +158,39 @@ void *professorthread(void *junk)
     //if class a thread arrives first, exclude all b threads (only A threads)
     //if class b thread arrives first, exclude all a threads (only B threads)
 
-    //use counting semaphore or conditional?
-
-
-
-      //pthread_mutex_lock(&lock);
           pthread_mutex_lock(&lock);
 
       //both consec account for the starvation case, waiting until the 
       //office is clear to restart with a office empty case
       if(classa_consec==5){
-         if(students_in_office==0)
+        flushoffice_flag=1;
+       //printf("flush flag activated\n");
+        //pthread_cond_wait(&arriveb,&lock); <- possibly defunct
+        //printf("b waiting%d\n",classb_waiting);
+         if(students_in_office==0&&(classb_waiting>0&&classa_inoffice==0))
          {
+           printf("b waiting%d\n",classb_waiting);
            pthread_cond_signal(&conditionb);
            classa_consec=0;
+           flushoffice_flag=0;
+           flag_type=2; //B's can go in if the office is empty
          }
       }
-
-      if(classb_consec==5){
-         if(students_in_office==0)
+      else if(classb_consec==5){
+               flushoffice_flag=1;
+         if(students_in_office==0&&classa_waiting>0)
          {
            pthread_cond_signal(&conditiona);
+           classb_consec=0;
+           flag_type=1;//A's can go in if the office is empty
          }
       }
-
-
+      //this needs to be checked, if classb is in the office let the A be released and act like a normal thread
+      if(flag_type==2&&(classb_waiting==0&&(classb_inoffice==0&& classb_consec>0)))
+      {
+      
+         pthread_cond_signal(&Hold);
+      }
       //there have been 10 students, and the professor must go on break
       if(students_since_break==professor_LIMIT)
       {
@@ -184,35 +201,38 @@ void *professorthread(void *junk)
 
       }
       //important statement, checks if the professor is not on break, and the starvation case is not in effect
-      else if(students_since_break<professor_LIMIT&&(classa_consec!=5||classb_consec!=5))
+      else if(students_since_break<professor_LIMIT && flushoffice_flag==0) //||classb_consec!=5)
       {
         //first student arrives or office is empty
-        if(students_in_office==0)
+        //favor A
+        if(students_in_office==0&&(classa_waiting>0&&classb_inoffice==0))
         {
           //admit student A
+          //printf("accessing A\n");
+          //printf("class A consec %d\n",classa_consec);
           pthread_cond_signal(&conditiona);
           first_flag=1;
         }
 
-        if(students_in_office==0&&first_flag!=1)
+        if(students_in_office==0&&(first_flag!=1 && classb_waiting>0))
         {
             pthread_cond_signal(&conditionb);
+            classb_consec++;
         }
         else if(students_in_office>0)
         {
           //if there is a class A student in the office, another student A can enter
-          if(classa_inoffice!=0)
+          if(classa_inoffice!=0&&classb_inoffice==0)
           {
             pthread_cond_signal(&conditiona);
           }
-          else if(classb_inoffice!=0)
+          else if(classb_inoffice!=0&&classb_inoffice==0)
           {
             pthread_cond_signal(&conditionb);
           }
         }
       }
 
-     //pthread_mutex_unlock(&lock);
       pthread_mutex_unlock(&lock);
   }
   pthread_exit(NULL);
@@ -228,22 +248,38 @@ void classa_enter()
    sem_wait(&class_seat);
 
   pthread_mutex_lock(&lock);
- 
-       pthread_cond_wait(&conditiona,&lock); 
+      classa_waiting+=1;
+
+      if(classa_consec==5){
+        //hold the thread to let B go first
+     pthread_cond_wait(&Hold,&lock);
+     }
+
+
+     printf("mutex a locked\n");
+  //printf("waiting up\n");
+  printf("waitingA... %d\n",classa_waiting);
+  printf("consecutive A %d\n",classa_consec);
+  printf("Office %d\n",students_in_office);
+    
+    pthread_cond_wait(&conditiona,&lock); 
 
   students_in_office += 1;
   classa_inoffice += 1;
-  classa_consec+=1;
+  //classa_consec+=1;
   //students_since_break += 1;
+
   printf("Students Since Break %d\n",students_since_break);
   printf("Office %d\n",students_in_office);
-  printf("consec_A %d\n",classa_consec);
+  printf("consecutive A %d\n",classa_consec);
+  printf("class a waiting %d\n",classa_waiting);
   pthread_mutex_unlock(&lock);
-
+  printf("class a mutex unlocked\n");
 
   //process literally kills itself otherwise (assert fails)
   pthread_mutex_lock(&prof_lock);
   students_since_break += 1;
+    classa_consec+=1;
   pthread_mutex_unlock(&prof_lock);
 }
 
@@ -254,25 +290,30 @@ void classa_enter()
 void classb_enter() 
 {
    sem_wait(&class_seat);
+  
+  printf("Thread B arrived\n");
 
    pthread_mutex_lock(&lock);
 
-   printf("mutex locked\n");
-
+   //pthread_cond_broadcast(&arriveb);
+   printf("mutex B locked\n");
+   classb_waiting+=1;
    pthread_cond_wait(&conditionb,&lock); 
-
-  students_in_office += 1;
-  classb_inoffice += 1;
-  classb_consec+=1;
+   printf("condition fulfilled B entering\n");
+   students_in_office += 1;
+   classb_inoffice += 1;
   //students_since_break += 1;
-  printf("Students Since Break %d\n",students_since_break);
-  printf("Office %d\n",students_in_office);
-  pthread_mutex_unlock(&lock);
+   printf("Students Since Break %d\n",students_since_break);
+   printf("Office %d\n",students_in_office);
+   printf("consec_A %d\n",classa_consec);
+
+   pthread_mutex_unlock(&lock);
 
 
   //process literally kills itself otherwise (assert fails)
   pthread_mutex_lock(&prof_lock);
   students_since_break += 1;
+    classb_consec+=1;
   pthread_mutex_unlock(&prof_lock);
 }
 
@@ -299,7 +340,8 @@ static void classa_leave()
 
   students_in_office -= 1;
   classa_inoffice -= 1;
-  pthread_cond_signal(&condition);
+  //pthread_cond_signal(&condition);
+  classa_waiting--;
   pthread_mutex_unlock(&prof_lock);
   
   sem_post(&class_seat);
@@ -320,7 +362,8 @@ static void classb_leave()
 
   students_in_office -= 1;
   classb_inoffice -= 1;
-  pthread_cond_signal(&condition);
+  //pthread_cond_signal(&condition);
+  classb_waiting--;
   pthread_mutex_unlock(&prof_lock);
   
   sem_post(&class_seat);
